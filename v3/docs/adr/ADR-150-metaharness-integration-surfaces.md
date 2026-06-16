@@ -1,6 +1,6 @@
 # ADR-150 — MetaHarness Integration Surfaces in `npx ruflo`
 
-**Status**: Implemented (Phase 1 ✅ iters 1–3 · Phase 2 ✅ iters 4–12 · KRR retrain pending production data)
+**Status**: Implemented (Phase 1 ✅ iters 1–3 · Phase 2 ✅ iters 4–12 · KRR retrain pending production data · Phase 3 scoped in [ADR-151](ADR-151-harness-intelligence-layer.md))
 **Date**: 2026-06-16 (revised 2026-06-16 — twelve iterations of /loop)
 **Related**: ADR-148 (cost-optimal router lifecycle via `@metaharness/router`), ADR-149 (per-model cost-optimal routing), ADR-026 (3-tier model routing), ADR-097 (federation budget circuit breaker), ADR-124 (optional native dependencies), ADR-144 (agent-authorization-propagation)
 **External reference**: [`ruvnet/agent-harness-generator`](https://github.com/ruvnet/agent-harness-generator) — the upstream that publishes `metaharness` + `@metaharness/*`. Same author (rUv), explicitly designed around ruflo primitives.

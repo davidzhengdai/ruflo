@@ -191,6 +191,29 @@ grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
 grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
 [[ -z "$miss" ]] && ok || bad "$miss"
 
+step "17v. ADR-151 Phase 3 scope shell drafted (iter 33)"
+F="$ROOT/../../v3/docs/adr/ADR-151-harness-intelligence-layer.md"
+miss=""
+[[ -f "$F" ]] || miss="$miss adr-missing"
+# Must enumerate all 5 sub-capabilities
+for cap in "Genome Similarity Search" "Harness Recommendation Engine" "Fleet-Wide Architecture Drift Detection" "Cross-Harness Capability Graph" "Plugin Compatibility Analysis"; do
+  grep -q "$cap" "$F" 2>/dev/null || miss="$miss missing-cap-${cap// /-}"
+done
+# Architectural inheritance from ADR-150 explicit
+grep -q "Architectural Inheritance from ADR-150" "$F" 2>/dev/null || miss="$miss no-inheritance-section"
+# All 4 constraints repeated
+for rule in Removable "Optional in package.json" "Graceful degradation" "CI gate"; do
+  grep -q "$rule" "$F" 2>/dev/null || miss="$miss missing-rule-${rule// /-}"
+done
+# Scope-only status (no code yet)
+grep -q "Status.*Proposed.*scope-only\|scope-only" "$F" 2>/dev/null || miss="$miss no-scope-only-marker"
+# ADR-150 cross-link present
+grep -q "ADR-150" "$F" 2>/dev/null || miss="$miss no-adr150-link"
+# ADR-150 status now references ADR-151
+PARENT="$ROOT/../../v3/docs/adr/ADR-150-metaharness-integration-surfaces.md"
+grep -q "ADR-151" "$PARENT" 2>/dev/null || miss="$miss adr150-no-back-ref"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17u. .harness/manifest.json + README documents witness gap (iter 32)"
 F="$ROOT/../../.harness/manifest.json"
 README="$ROOT/../../.harness/README.md"
