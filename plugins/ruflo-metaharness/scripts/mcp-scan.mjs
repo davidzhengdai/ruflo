@@ -18,9 +18,9 @@
 
 // iter 50 — parseMcpScanText extracted to _harness.mjs so oia-audit
 // can use the same parser without duplicating logic.
-import { runHarness, emitDegradedJsonAndExit, parseMcpScanText } from './_harness.mjs';
-
-const SEVERITY_RANK = { info: 0, low: 1, medium: 2, high: 3, critical: 3 };
+// iter 63 — SEVERITY_RANK also moves to _harness.mjs (single source of
+// truth; previously this file had a literal that diverged from oia-audit's).
+import { runHarness, emitDegradedJsonAndExit, parseMcpScanText, SEVERITY_RANK, rankSeverity } from './_harness.mjs';
 
 const ARGS = (() => {
   const a = { path: '.', format: 'json', failOn: 'high' };
@@ -61,7 +61,10 @@ function main() {
   };
   const findings = payload.findings;
   const threshold = SEVERITY_RANK[ARGS.failOn];
-  const offending = findings.filter((f) => SEVERITY_RANK[String(f.severity || 'low').toLowerCase()] >= threshold);
+  // iter 63 — rankSeverity() safe lookup. Pre-iter-63 `undefined >= 3`
+  // was false → unknown-severity findings (e.g., warn / error) were
+  // silently excluded from the offending set, weakening --fail-on alerts.
+  const offending = findings.filter((f) => rankSeverity(f.severity) >= threshold);
 
   const alert = {
     threshold: ARGS.failOn,

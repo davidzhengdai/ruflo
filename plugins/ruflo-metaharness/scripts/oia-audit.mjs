@@ -25,43 +25,13 @@
 //   2  config error or audit failure
 
 import { spawnSync } from 'node:child_process';
-import { runHarness, runMetaharness, runHarnessAsync, runMetaharnessAsync, emitDegradedJsonAndExit, parseMcpScanText } from './_harness.mjs';
+// iter 63 — SEVERITY_RANK + rankSeverity consolidated to _harness.mjs
+// (was local in iter 62; now shared with audit-trend + mcp-scan).
+import { runHarness, runMetaharness, runHarnessAsync, runMetaharnessAsync, emitDegradedJsonAndExit, parseMcpScanText, SEVERITY_RANK, rankSeverity } from './_harness.mjs';
 
-// iter 62 — extended SEVERITY_RANK to include severity values the
-// iter-50 text parser actually emits. Upstream `harness mcp-scan`
-// outputs [INFO], [WARN], [HIGH], [CRITICAL] (and possibly [ERROR]).
-// Pre-iter-62, only `clean/low/medium/high` were ranked; any other
-// severity returned `undefined` from the table, and the reduce
-// expression `SEVERITY_RANK[s] > SEVERITY_RANK[acc]` evaluated to
-// false (NaN > 0 === false), silently ignoring them in the composite
-// severity rollup. A [CRITICAL] finding would NOT bump composite worst.
-//
-// Mapping rationale:
-//   info     → 0 (informational, no harm)
-//   low      → 1
-//   medium   → 2
-//   warn     → 2 (warn ≈ medium)
-//   high     → 3
-//   critical → 4 (critical > high — explicit elevation)
-//   error    → 3 (error ≈ high; some tools use ERROR for HIGH-equivalent)
-const SEVERITY_RANK = {
-  clean: 0, info: 0,
-  low: 1,
-  medium: 2, warn: 2,
-  high: 3, error: 3,
-  critical: 4,
-};
-
-// Composite severity-to-string mapping respects the new rank space:
-// anything ≥ 3 reports as 'high' so existing alert thresholds stay
-// honest (a CRITICAL finding triggers --alert-on-worst high).
-function rankToSeverity(rank) {
-  if (rank >= 4) return 'critical';
-  if (rank >= 3) return 'high';
-  if (rank >= 2) return 'medium';
-  if (rank >= 1) return 'low';
-  return 'clean';
-}
+// iter 63 — SEVERITY_RANK + rankSeverity moved to _harness.mjs (single
+// source of truth). The local copy from iter 62 is gone; the imports
+// at the top of this file provide the same names.
 const NS = process.env.OIA_AUDIT_NAMESPACE || 'metaharness-audit';
 const CLI_PKG = process.env.CLI_CORE === '1'
   ? '@claude-flow/cli-core@alpha'
@@ -171,21 +141,19 @@ async function main() {
   // correctly elevates composite worst.
   const tmWorst = String(tm.json?.worst || 'clean').toLowerCase();
   const mcpFindings = Array.isArray(mcp.json?.findings) ? mcp.json.findings : [];
+  // iter 63 — rankSeverity() from _harness.mjs handles unknown-severity
+  // safely (returns 0 instead of undefined) so the reduce never sees NaN.
   const mcpWorst = mcpFindings.reduce((acc, f) => {
     const s = String(f.severity || 'low').toLowerCase();
-    const sRank = SEVERITY_RANK[s] ?? 0;
-    const accRank = SEVERITY_RANK[acc] ?? 0;
-    return sRank > accRank ? s : acc;
+    return rankSeverity(s) > rankSeverity(acc) ? s : acc;
   }, 'clean');
-  const tmRank = SEVERITY_RANK[tmWorst] ?? 0;
-  const mcpRank = SEVERITY_RANK[mcpWorst] ?? 0;
-  const compositeWorst = tmRank > mcpRank ? tmWorst : mcpWorst;
+  const compositeWorst = rankSeverity(tmWorst) > rankSeverity(mcpWorst) ? tmWorst : mcpWorst;
 
   let alertTriggered = false;
   let alertReason = null;
   if (ARGS.alertWorst !== null) {
-    const threshold = SEVERITY_RANK[ARGS.alertWorst] ?? 0;
-    const compositeRank = SEVERITY_RANK[compositeWorst] ?? 0;
+    const threshold = rankSeverity(ARGS.alertWorst);
+    const compositeRank = rankSeverity(compositeWorst);
     if (compositeRank >= threshold && threshold > 0) {
       alertTriggered = true;
       alertReason = `composite worst=${compositeWorst} ≥ ${ARGS.alertWorst}`;

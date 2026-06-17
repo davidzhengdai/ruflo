@@ -30,8 +30,11 @@ import { spawnSync } from 'node:child_process';
 // Falls back to null if either record predates iter-38 oia-audit (no
 // fingerprint field) — graceful degradation, never throws.
 import { similarity } from './_similarity.mjs';
+// iter 63 — shared SEVERITY_RANK from _harness.mjs (was a local literal
+// missing info/warn/error/critical, which caused NaN-compare hazards).
+import { SEVERITY_RANK, rankSeverity } from './_harness.mjs';
 
-const SEVERITY_RANK = { clean: 0, low: 1, medium: 2, high: 3 };
+// iter 63 — SEVERITY_RANK moved to _harness.mjs (imported above)
 const NS = process.env.AUDIT_TREND_NAMESPACE || 'metaharness-audit';
 const CLI_PKG = process.env.CLI_CORE === '1'
   ? '@claude-flow/cli-core@alpha'
@@ -105,7 +108,9 @@ function main() {
 
   const baseWorst = String(baseline.composite.worst || 'clean').toLowerCase();
   const currWorst = String(current.composite.worst || 'clean').toLowerCase();
-  const deltaRank = SEVERITY_RANK[currWorst] - SEVERITY_RANK[baseWorst];
+  // iter 63 — safe rankSeverity() eliminates NaN-compare when either
+  // severity is unknown (was a latent bug in audit-trend's drift verdict).
+  const deltaRank = rankSeverity(currWorst) - rankSeverity(baseWorst);
   const worsened = deltaRank > 0;
   const improved = deltaRank < 0;
 

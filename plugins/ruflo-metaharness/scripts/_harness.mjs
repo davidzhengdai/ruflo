@@ -169,6 +169,39 @@ export function runHarness(args, opts) {
 }
 
 /**
+ * iter 63 — single source of truth for severity ranks across the
+ * metaharness plugin family. Pre-iter-63, three scripts (oia-audit,
+ * audit-trend, mcp-scan) maintained their own SEVERITY_RANK literal,
+ * each missing different keys, each producing different NaN-compare
+ * behavior on unknown severities. Iter 62 fixed oia-audit; iter 63
+ * propagates the fix and consolidates.
+ *
+ * Mapping rationale:
+ *   clean / info     → 0  (no harm)
+ *   low              → 1
+ *   medium / warn    → 2
+ *   high / error     → 3
+ *   critical         → 4  (explicit elevation above high)
+ *
+ * `rankSeverity(s)` is the safe accessor — returns 0 for any unknown
+ * string instead of `undefined`, eliminating the NaN-compare hazard
+ * (`undefined > 3` evaluates to false → unknown severities silently
+ * ignored in reduce expressions).
+ */
+export const SEVERITY_RANK = Object.freeze({
+  clean: 0, info: 0,
+  low: 1,
+  medium: 2, warn: 2,
+  high: 3, error: 3,
+  critical: 4,
+});
+
+export function rankSeverity(s) {
+  if (s == null) return 0;
+  return SEVERITY_RANK[String(s).toLowerCase()] ?? 0;
+}
+
+/**
  * iter 50 — parse `harness mcp-scan` text output into structured findings.
  *
  * Upstream `harness mcp-scan` emits plain text even with --json:
