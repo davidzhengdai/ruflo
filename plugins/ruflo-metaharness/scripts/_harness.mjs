@@ -16,9 +16,70 @@
 //     `degraded: true, reason: 'metaharness-not-available'` — never throws
 //     (ADR-150 graceful-degradation rule #3)
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+
+/**
+ * iter 56 — async variant of execCli. Used by oia-audit.mjs to parallelize
+ * its 5 subprocess calls, dropping worst-case wall-clock from 5×TIMEOUT
+ * (sequential) to 1×TIMEOUT (parallel). Identical return shape to the
+ * sync execCli so callers can swap without ceremony.
+ */
+function execCliAsync(npxArgs, opts = {}) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const wantJson = opts.json !== false;
+    const argv = wantJson && !npxArgs.includes('--json') ? [...npxArgs, '--json'] : [...npxArgs];
+    const p = spawn('npx', argv, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: opts.cwd,
+      env: { ...process.env, ...(opts.env || {}) },
+      shell: process.platform === 'win32',
+    });
+    let stdout = '', stderr = '';
+    p.stdout?.on('data', (d) => { stdout += d.toString(); });
+    p.stderr?.on('data', (d) => { stderr += d.toString(); });
+    const timer = setTimeout(() => {
+      try { p.kill('SIGTERM'); } catch { /* ignore */ }
+    }, timeoutMs);
+    p.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({
+        stdout, stderr: stderr + String(e?.message ?? e),
+        exitCode: 127, json: null, durationMs: Date.now() - start,
+        degraded: true, reason: 'metaharness-not-available',
+      });
+    });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      const durationMs = Date.now() - start;
+      if (code === null || /could not determine executable|404|not installed|MODULE_NOT_FOUND/i.test(stderr)) {
+        resolve({
+          stdout, stderr,
+          exitCode: code ?? 127, json: null, durationMs,
+          degraded: true, reason: 'metaharness-not-available',
+        });
+        return;
+      }
+      let json = null;
+      if (wantJson) {
+        const m = /\{[\s\S]*\}/.exec(stdout);
+        if (m) { try { json = JSON.parse(m[0]); } catch { /* leave null */ } }
+      }
+      resolve({ stdout, stderr, exitCode: code ?? 0, json, durationMs, degraded: false });
+    });
+  });
+}
+
+export function runMetaharnessAsync(args, opts) {
+  return execCliAsync(['-y', 'metaharness@latest', ...args], opts);
+}
+
+export function runHarnessAsync(args, opts) {
+  return execCliAsync(['-y', '-p', 'metaharness@latest', 'harness', ...args], opts);
+}
 
 // ITER 27 — npx invocation hardening.
 // The pre-iter-27 implementation passed `'-y metaharness@latest'` as a

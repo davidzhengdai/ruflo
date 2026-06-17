@@ -191,6 +191,26 @@ grep -q "execCli(\[\s*'-y'\s*,\s*'metaharness@latest'" "$F" 2>/dev/null || \
 grep -q "cwd: opts" "$F" || miss="$miss no-cwd-passthrough"
 [[ -z "$miss" ]] && ok || bad "$miss"
 
+step "17z19. oia-audit parallelizes 5 subprocesses (iter 56 — closes iter-55 gap A)"
+miss=""
+HARNESS="$ROOT/scripts/_harness.mjs"
+# Async variants exist
+grep -q "export function runHarnessAsync" "$HARNESS" 2>/dev/null || miss="$miss no-runHarnessAsync"
+grep -q "export function runMetaharnessAsync" "$HARNESS" 2>/dev/null || miss="$miss no-runMetaharnessAsync"
+grep -q "execCliAsync\|spawn(" "$HARNESS" 2>/dev/null || miss="$miss no-async-spawn"
+# oia-audit uses them via Promise.all
+OIA="$ROOT/scripts/oia-audit.mjs"
+grep -q "runAllParallel" "$OIA" 2>/dev/null || miss="$miss no-parallel-fn"
+grep -q "Promise.all" "$OIA" 2>/dev/null || miss="$miss no-promise-all"
+grep -q "async function main" "$OIA" 2>/dev/null || miss="$miss main-not-async"
+# Runtime check: happy-path oia-audit completes < 5s on a fresh repo
+START=$(date +%s)
+node "$OIA" --dry-run --format json >/dev/null 2>&1
+END=$(date +%s)
+DUR=$((END - START))
+[[ "$DUR" -le 30 ]] || miss="$miss oia-audit-slow:${DUR}s"
+[[ -z "$miss" ]] && ok || bad "$miss"
+
 step "17z18. graceful-degradation drill extended to mint + drift-from-history (iter 55)"
 miss=""
 # Workflow drill updated

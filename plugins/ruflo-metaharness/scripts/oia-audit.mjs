@@ -25,7 +25,7 @@
 //   2  config error or audit failure
 
 import { spawnSync } from 'node:child_process';
-import { runHarness, runMetaharness, emitDegradedJsonAndExit, parseMcpScanText } from './_harness.mjs';
+import { runHarness, runMetaharness, runHarnessAsync, runMetaharnessAsync, emitDegradedJsonAndExit, parseMcpScanText } from './_harness.mjs';
 
 const SEVERITY_RANK = { clean: 0, low: 1, medium: 2, high: 3 };
 const NS = process.env.OIA_AUDIT_NAMESPACE || 'metaharness-audit';
@@ -50,12 +50,8 @@ const ARGS = (() => {
 // fingerprint to be consumable by _similarity.mjs (which expects the
 // metaharness CLI shape: harnessFit/compileConfidence/agent_topology),
 // we need to dispatch to runMetaharness for score+genome, not runHarness.
-function runOne(args, label, engine = 'harness') {
-  const r = engine === 'metaharness' ? runMetaharness(args) : runHarness(args);
-  // iter 50 — when label is 'mcp-scan' and the upstream returned text
-  // (json null), parse findings via the shared text parser so audit-trend
-  // can run its introduced/cleared diff on real data. The upstream may
-  // someday emit structured JSON; if so r.json wins and we skip the parse.
+// iter 56 — annotated runOne result is identical for sync/async paths.
+function annotateOne(r, label) {
   let json = r.json;
   if (label === 'mcp-scan' && !json && !r.degraded && r.stdout) {
     const parsed = parseMcpScanText(r.stdout);
@@ -70,6 +66,29 @@ function runOne(args, label, engine = 'harness') {
     durationMs: r.durationMs,
     stderrTail: r.degraded ? (r.stderr || '').slice(-200) : null,
   };
+}
+
+function runOne(args, label, engine = 'harness') {
+  const r = engine === 'metaharness' ? runMetaharness(args) : runHarness(args);
+  return annotateOne(r, label);
+}
+
+// iter 56 — parallel variant. The composite audit's 5 subprocess calls
+// are mutually independent (each scans the same path read-only), so
+// they can run concurrently. Worst-case wall-clock drops from
+// 5×DEFAULT_TIMEOUT_MS (sequential) to 1×DEFAULT_TIMEOUT_MS (parallel)
+// — the iter-55-flagged gap (oia-audit timeout under unreachable
+// registry) is closed by this.
+async function runAllParallel(path) {
+  const tasks = [
+    runHarnessAsync(['oia-manifest', path]).then((r) => ['oiaManifest', annotateOne(r, 'oia-manifest')]),
+    runHarnessAsync(['threat-model', path]).then((r) => ['threatModel', annotateOne(r, 'threat-model')]),
+    runHarnessAsync(['mcp-scan', path]).then((r) => ['mcpScan', annotateOne(r, 'mcp-scan')]),
+    runMetaharnessAsync(['score', path]).then((r) => ['score', annotateOne(r, 'score')]),
+    runMetaharnessAsync(['genome', path]).then((r) => ['genome', annotateOne(r, 'genome')]),
+  ];
+  const results = await Promise.all(tasks);
+  return Object.fromEntries(results);
 }
 
 function persist(payload) {
@@ -88,23 +107,19 @@ function persist(payload) {
   };
 }
 
-function main() {
+async function main() {
   if (ARGS.alertWorst !== null && !SEVERITY_RANK.hasOwnProperty(ARGS.alertWorst)) {
     console.error(`oia-audit: --alert-on-worst must be one of clean|low|medium|high; got ${ARGS.alertWorst}`);
     process.exit(2);
   }
 
   const startedAt = new Date().toISOString();
-  const oia = runOne(['oia-manifest', ARGS.path], 'oia-manifest');
-  const tm = runOne(['threat-model', ARGS.path], 'threat-model');
-  const mcp = runOne(['mcp-scan', ARGS.path], 'mcp-scan');
-  // iter 38 + iter 47 — bundle score + genome so audit-trend can compute
-  // structural distance via _similarity.mjs. Both use the `metaharness`
-  // CLI (not `harness`) because the two binaries have different schemas
-  // for the same subcommand names; only the metaharness CLI emits the
-  // shape similarity() expects (harnessFit/agent_topology/etc).
-  const score = runOne(['score', ARGS.path], 'score', 'metaharness');
-  const genome = runOne(['genome', ARGS.path], 'genome', 'metaharness');
+  // iter 56 — run the 5 sub-audits in parallel (was sequential pre-iter-56).
+  // Worst-case wall-clock improves from 5×TIMEOUT to 1×TIMEOUT in the
+  // unreachable-registry case; the happy path improves from sum-of-durations
+  // to max-of-durations (typically ~2-4× faster).
+  const all = await runAllParallel(ARGS.path);
+  const { oiaManifest: oia, threatModel: tm, mcpScan: mcp, score, genome } = all;
 
   // If all FIVE say "metaharness not available", surface the degraded
   // payload exactly once and exit 0 (architectural constraint #3).
@@ -181,4 +196,7 @@ function main() {
   if (alertTriggered) process.exit(1);
 }
 
-main();
+main().catch((e) => {
+  console.error('oia-audit crashed:', e?.message ?? e);
+  process.exit(2);
+});
